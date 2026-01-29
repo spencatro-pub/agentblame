@@ -57,6 +57,30 @@ import { writeHookTrace } from "./lib/hooks";
 // Types
 // =============================================================================
 
+interface CapturedLine {
+  content: string;
+  hash: string;
+  hashNormalized: string;
+  lineNumber?: number;
+  contextBefore?: string;
+  contextAfter?: string;
+}
+
+interface CapturedEdit {
+  timestamp: string;
+  provider: "cursor" | "claudeCode" | "opencode" | "copilot";
+  filePath: string;
+  model: string | null;
+  lines: CapturedLine[];
+  content: string;
+  contentHash: string;
+  contentHashNormalized: string;
+  editType: "addition" | "modification" | "replacement";
+  oldContent?: string;
+  sessionId?: string;
+  toolUseId?: string;
+}
+
 interface CursorPayload {
   file_path?: string;
   edits?: Array<{ old_string: string; new_string: string }>;
@@ -110,6 +134,26 @@ interface OpenCodePayload {
   model?: string;
   prompt?: string;
   hook_event?: "before" | "after";
+}
+
+interface CopilotToolArgs {
+  path?: string;         // File path for edit/create
+  content?: string;      // Content for create
+  old_str?: string;    // For edit operations (if provided)
+  new_str?: string;    // For edit operations (if provided)
+  command?: string;      // For bash tool
+  description?: string;  // Tool description
+}
+
+interface CopilotPayload {
+  timestamp: number;
+  cwd: string;
+  toolName: string;      // "edit" | "create" | "bash" | "view"
+  toolArgs: CopilotToolArgs;      // JSON string -> CopilotToolArgs
+  toolResult: {
+    resultType: "success" | "failure" | "denied";
+    textResultForLlm: string;
+  };
 }
 
 // =============================================================================
@@ -457,17 +501,14 @@ async function getBeforeContent(
 // Payload Processing
 // =============================================================================
 
-function parseArgs(): {
-  provider: "cursor" | "claude" | "opencode";
-  event?: string;
-} {
+function parseArgs(): { provider: "cursor" | "claude" | "opencode" | "copilot"; event?: string } {
   const args = process.argv.slice(2);
-  let provider: "cursor" | "claude" | "opencode" = "cursor";
+  let provider: "cursor" | "claude" | "opencode" | "copilot" = "cursor";
   let event: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--provider" && args[i + 1]) {
-      provider = args[i + 1] as "cursor" | "claude" | "opencode";
+      provider = args[i + 1] as "cursor" | "claude" | "opencode" | "copilot";
       i++;
     } else if (args[i] === "--event" && args[i + 1]) {
       event = args[i + 1];
@@ -796,6 +837,160 @@ async function processOpenCodePayload(payload: OpenCodePayload): Promise<void> {
   if (process.env.AGENTBLAME_DEBUG) {
     console.error(`[agentblame] Captured OpenCode ${payload.tool}: ${filePath}`);
   }
+}
+
+/**
+ * Process Copilot payload.
+ * Copilot provides toolArgs as a JSON string containing the file path.
+ * Only process edit and create tools on success.
+ */
+async function processCopilotPayload(payload: CopilotPayload): Promise<CapturedEdit[]> {
+  const edits: CapturedEdit[] = [];
+
+  // Only process successful operations
+  if (payload.toolResult?.resultType !== "success") {
+    return edits;
+  }
+
+  const toolName = payload.toolName?.toLowerCase() || "";
+
+  // Only process edit and create tools (skip bash, view)
+  if (toolName !== "edit" && toolName !== "create") {
+    return edits;
+  }
+
+  // Parse toolArgs JSON string
+  let toolArgs: CopilotToolArgs = payload?.toolArgs;
+  try {
+    if (payload.toolArgs) {
+      toolArgs = payload.toolArgs;
+    }
+  } catch {
+    // Invalid JSON in toolArgs
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] Failed to parse Copilot toolArgs: ${payload.toolArgs}`);
+    }
+    return edits;
+  }
+
+  const filePath = toolArgs.path;
+  if (!filePath) {
+    return edits;
+  }
+
+  const timestamp = new Date(payload.timestamp).toISOString();
+  // Model info not available in Copilot payload; use "copilot" as model name
+  const model = "copilot";
+
+  // Handle create tool (new file creation)
+  if (toolName === "create") {
+    // For create, we need to read the file to get its content
+    const fileLines = await readFileLines(filePath);
+    if (!fileLines || fileLines.length === 0) {
+      return edits;
+    }
+
+    const content = fileLines.join("\n");
+    if (!content.trim()) {
+      return edits;
+    }
+
+    // For new files, all lines are added
+    const linesWithNumbers = fileLines
+      .map((line, i) => ({ content: line, lineNumber: i + 1 }))
+      .filter(l => l.content.trim());
+
+    const lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
+    if (lines.length === 0) return edits;
+
+    edits.push({
+      timestamp,
+      provider: "copilot",
+      filePath,
+      model,
+      lines,
+      content,
+      contentHash: computeHash(content),
+      contentHashNormalized: computeNormalizedHash(content),
+      editType: "addition",
+    });
+
+    return edits;
+  }
+
+  // Handle edit tool
+  if (toolName === "edit") {
+    // Read the current file content (after edit)
+    const fileLines = await readFileLines(filePath);
+    if (!fileLines) {
+      return edits;
+    }
+
+    // If we have oldString/newString in toolArgs, use diff approach
+    if (toolArgs.old_str && toolArgs.new_str) {
+      const addedContent = extractAddedContent(toolArgs.old_str, toolArgs.new_str);
+      if (!addedContent.trim()) {
+        return edits;
+      }
+
+      // Try to find line numbers for the added content
+      const linesWithNumbers = findEditLocation(fileLines, toolArgs.old_str, toolArgs.new_str);
+      let lines: CapturedLine[];
+
+      if (linesWithNumbers && linesWithNumbers.length > 0) {
+        lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
+      } else {
+        lines = hashLines(addedContent);
+      }
+
+      if (lines.length === 0) return edits;
+
+      edits.push({
+        timestamp,
+        provider: "copilot",
+        filePath,
+        model,
+        lines,
+        content: addedContent,
+        contentHash: computeHash(addedContent),
+        contentHashNormalized: computeNormalizedHash(addedContent),
+        editType: determineEditType(toolArgs.old_str, toolArgs.new_str || ''),
+        oldContent: toolArgs.old_str,
+      });
+
+      return edits;
+    }
+
+    // Fallback: if no oldString/newString, read the entire file as the content
+    // This captures the file state after the edit
+    const content = fileLines.join("\n");
+    if (!content.trim()) {
+      return edits;
+    }
+
+    const linesWithNumbers = fileLines
+      .map((line, i) => ({ content: line, lineNumber: i + 1 }))
+      .filter(l => l.content.trim());
+
+    const lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
+    if (lines.length === 0) return edits;
+
+    edits.push({
+      timestamp,
+      provider: "copilot",
+      filePath,
+      model,
+      lines,
+      content,
+      contentHash: computeHash(content),
+      contentHashNormalized: computeNormalizedHash(content),
+      editType: "modification",
+    });
+
+    return edits;
+  }
+
+  return edits;
 }
 
 // =============================================================================

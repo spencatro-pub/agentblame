@@ -21,11 +21,13 @@ import {
   installCursorHooks,
   installClaudeHooks,
   installOpenCodeHooks,
+  installCopilotHooks,
   installGitHook,
   installGitHubAction,
   uninstallCursorHooks,
   uninstallClaudeHooks,
   uninstallOpenCodeHooks,
+  uninstallCopilotHooks,
   uninstallGitHook,
   uninstallGitHubAction,
 } from "./lib/hooks";
@@ -122,6 +124,7 @@ Agent Blame v3 - Track AI-generated code in your commits
 Usage:
   agentblame init              Set up hooks for current repo
   agentblame init --force      Also clean up old global install
+  agentblame init --trace-all  Enable tracing of all capture inputs
   agentblame clean             Remove hooks from current repo
   agentblame blame <file>      Show AI attribution for a file
   agentblame blame --summary   Show summary only
@@ -379,6 +382,9 @@ async function runInit(initArgs: string[] = []): Promise<void> {
   const opencodeSuccess = await installOpenCodeHooks(repoRoot);
   results.push({ name: "OpenCode hooks", success: opencodeSuccess });
 
+  const copilotSuccess = await installCopilotHooks(repoRoot);
+  results.push({ name: "Copilot hooks", success: copilotSuccess });
+
   // Install repo hooks and workflow
   const gitHookSuccess = await installGitHook(repoRoot);
   results.push({ name: "Git post-commit hook", success: gitHookSuccess });
@@ -480,6 +486,9 @@ async function runClean(uninstallArgs: string[] = []): Promise<void> {
 
   const opencodeSuccess = await uninstallOpenCodeHooks(repoRoot);
   results.push({ name: "OpenCode hooks", success: opencodeSuccess });
+
+  const copilotSuccess = await uninstallCopilotHooks(repoRoot);
+  results.push({ name: "Copilot hooks", success: copilotSuccess });
 
   // Remove repo hooks and workflow
   const gitHookSuccess = await uninstallGitHook(repoRoot);
