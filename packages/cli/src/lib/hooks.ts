@@ -444,24 +444,23 @@ export async function installCopilotHooks(repoRoot: string): Promise<boolean> {
     config.version = config.version ?? 1;
     config.hooks = config.hooks ?? {};
 
-    // Configure postToolUse hook
-    config.hooks.postToolUse = config.hooks.postToolUse ?? [];
-    if (!Array.isArray(config.hooks.postToolUse)) {
-      config.hooks.postToolUse = [];
+    // iterate over the following hooktypes installing hooks: preToolUse, postToolUse, sessionStart, userPromptSubmitted
+    const hookTypeList = ["preToolUse", "postToolUse", "sessionStart", "userPromptSubmitted"];
+    for (const hookType of hookTypeList) {
+      // create the hook object
+      config.hooks[hookType] = config.hooks[hookType] ?? [];
+      if (!Array.isArray(config.hooks[hookType])) {
+        config.hooks[hookType] = [];
+      }
+
+      // Add the hook
+      config.hooks[hookType].push({
+        type: "command",
+        bash: `agentblame capture --provider copilot --event ${hookType}`,
+        cwd: ".",
+        timeoutSec: 10,
+      });
     }
-
-    // Remove any existing agentblame hooks first
-    config.hooks.postToolUse = config.hooks.postToolUse.filter(
-      (h: any) => !h?.bash?.includes("agentblame")
-    );
-
-    // Add the new hook
-    config.hooks.postToolUse.push({
-      type: "command",
-      bash: "agentblame capture --provider copilot",
-      cwd: ".",
-      timeoutSec: 10,
-    });
 
     await fs.promises.writeFile(
       hooksPath,
@@ -506,10 +505,14 @@ export async function uninstallCopilotHooks(repoRoot: string): Promise<boolean> 
         await fs.promises.readFile(hooksPath, "utf8")
       );
 
-      if (config.hooks?.postToolUse) {
-        config.hooks.postToolUse = config.hooks.postToolUse.filter(
-          (h: any) => !h?.bash?.includes("agentblame")
-        );
+      const hookTypeList = ["preToolUse", "postToolUse", "sessionStart", "userPromptSubmitted"];
+      for (const hookType of hookTypeList) {
+        // remove the hook if it is from agentblame
+        if (config.hooks?.[hookType]) {
+          config.hooks[hookType] = config.hooks[hookType].filter(
+            (h: any) => !h?.bash?.includes("agentblame")
+          );
+        }
       }
 
       await fs.promises.writeFile(
@@ -908,7 +911,7 @@ export async function uninstallGitHubAction(repoRoot: string): Promise<boolean> 
  * @param input - The raw input string to trace
  * @returns The trace filename if written, null if tracing disabled
  */
-export function writeHookTrace(repoRoot: string, input: string): string | null {
+export function writeHookTrace(repoRoot: string, input: string, event?: string): string | null {
 
   // Create traces directory if needed
   const agentblameDir = path.join(repoRoot, ".agentblame");
@@ -919,7 +922,7 @@ export function writeHookTrace(repoRoot: string, input: string): string | null {
 
   // Generate filename with timestamp
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `${timestamp}.json`;
+  const filename = `${timestamp}-${event || "unknown"}.json`;
   const tracePath = path.join(tracesDir, filename);
 
   // Write the trace file
