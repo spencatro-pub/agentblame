@@ -885,108 +885,38 @@ async function processCopilotPayload(payload: CopilotPayload): Promise<CapturedE
   // Handle create tool (new file creation)
   if (toolName === "create") {
     // For create, we need to read the file to get its content
-    const fileLines = await readFileLines(filePath);
-    if (!fileLines || fileLines.length === 0) {
-      return edits;
-    }
-
-    const content = fileLines.join("\n");
-    if (!content.trim()) {
-      return edits;
-    }
-
-    // For new files, all lines are added
-    const linesWithNumbers = fileLines
-      .map((line, i) => ({ content: line, lineNumber: i + 1 }))
-      .filter(l => l.content.trim());
-
-    const lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
-    if (lines.length === 0) return edits;
-
-    edits.push({
-      timestamp,
-      provider: "copilot",
-      filePath,
-      model,
-      lines,
-      content,
-      contentHash: computeHash(content),
-      contentHashNormalized: computeNormalizedHash(content),
-      editType: "addition",
-    });
-
+    
+    // TODO: handle create tool call
+    // edits.push({
+    //   timestamp,
+    //   provider: "copilot",
+    //   filePath,
+    //   model,
+    //   lines,
+    //   content,
+    //   contentHash: computeHash(content),
+    //   contentHashNormalized: computeNormalizedHash(content),
+    //   editType: "addition",
+    // });
     return edits;
   }
 
   // Handle edit tool
   if (toolName === "edit") {
     // Read the current file content (after edit)
-    const fileLines = await readFileLines(filePath);
-    if (!fileLines) {
-      return edits;
-    }
-
-    // If we have oldString/newString in toolArgs, use diff approach
-    if (toolArgs.old_str && toolArgs.new_str) {
-      const addedContent = extractAddedContent(toolArgs.old_str, toolArgs.new_str);
-      if (!addedContent.trim()) {
-        return edits;
-      }
-
-      // Try to find line numbers for the added content
-      const linesWithNumbers = findEditLocation(fileLines, toolArgs.old_str, toolArgs.new_str);
-      let lines: CapturedLine[];
-
-      if (linesWithNumbers && linesWithNumbers.length > 0) {
-        lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
-      } else {
-        lines = hashLines(addedContent);
-      }
-
-      if (lines.length === 0) return edits;
-
-      edits.push({
-        timestamp,
-        provider: "copilot",
-        filePath,
-        model,
-        lines,
-        content: addedContent,
-        contentHash: computeHash(addedContent),
-        contentHashNormalized: computeNormalizedHash(addedContent),
-        editType: determineEditType(toolArgs.old_str, toolArgs.new_str || ''),
-        oldContent: toolArgs.old_str,
-      });
-
-      return edits;
-    }
-
-    // Fallback: if no oldString/newString, read the entire file as the content
-    // This captures the file state after the edit
-    const content = fileLines.join("\n");
-    if (!content.trim()) {
-      return edits;
-    }
-
-    const linesWithNumbers = fileLines
-      .map((line, i) => ({ content: line, lineNumber: i + 1 }))
-      .filter(l => l.content.trim());
-
-    const lines = hashLinesWithNumbers(linesWithNumbers, fileLines);
-    if (lines.length === 0) return edits;
-
-    edits.push({
-      timestamp,
-      provider: "copilot",
-      filePath,
-      model,
-      lines,
-      content,
-      contentHash: computeHash(content),
-      contentHashNormalized: computeNormalizedHash(content),
-      editType: "modification",
-    });
-
+    // TODO: handle edit tool call
+    // edits.push({
+    //   timestamp,
+    //   provider: "copilot",
+    //   filePath,
+    //   model,
+    //   lines,
+    //   content: addedContent,
+    //   contentHash: computeHash(addedContent),
+    //   contentHashNormalized: computeNormalizedHash(addedContent),
+    //   editType: determineEditType(toolArgs.old_str, toolArgs.new_str || ''),
+    //   oldContent: toolArgs.old_str,
+    // });
     return edits;
   }
 
@@ -1046,6 +976,8 @@ export async function runCapture(): Promise<void> {
       await processClaudePayload(payload as ClaudePayload);
     } else if (provider === "opencode") {
       await processOpenCodePayload(payload as OpenCodePayload);
+    } else if (provider === "copilot") {
+      await processCopilotPayload(payload as CopilotPayload);
     }
 
     process.exit(0);
