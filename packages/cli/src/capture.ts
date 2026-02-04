@@ -844,83 +844,67 @@ async function processOpenCodePayload(payload: OpenCodePayload): Promise<void> {
  * Copilot provides toolArgs as a JSON string containing the file path.
  * Only process edit and create tools on success.
  */
-async function processCopilotPayload(payload: CopilotPayload): Promise<CapturedEdit[]> {
-  const edits: CapturedEdit[] = [];
+async function processCopilotPayload(payload: CopilotPayload): Promise<void> {
 
   // Only process successful operations
   if (payload.toolResult?.resultType !== "success") {
-    return edits;
+    console.warn(`[agentblame] copilot payload was not successful, skipping`);
+    return;
   }
 
   const toolName = payload.toolName?.toLowerCase() || "";
 
-  // Only process edit and create tools (skip bash, view)
+  // Only process edit and create tools
   if (toolName !== "edit" && toolName !== "create") {
-    return edits;
+    console.warn(`[agentblame] copilot tool (${toolName}) not edit / create, skipping`);
+    return;
   }
 
   // Parse toolArgs JSON string
   let toolArgs: CopilotToolArgs = payload?.toolArgs;
-  try {
-    if (payload.toolArgs) {
-      toolArgs = payload.toolArgs;
-    }
-  } catch {
-    // Invalid JSON in toolArgs
-    if (process.env.AGENTBLAME_DEBUG) {
-      console.error(`[agentblame] Failed to parse Copilot toolArgs: ${payload.toolArgs}`);
-    }
-    return edits;
-  }
 
   const filePath = toolArgs.path;
   if (!filePath) {
-    return edits;
+    console.warn(`[agentblame] copilot payload toolargs missing filepath`);
+    return;
   }
 
+  // TODO: Extract and store prompt
+
+  // TODO: get a real conversation ID
   const timestamp = new Date(payload.timestamp).toISOString();
+  const ctx = await setupCaptureContext(filePath, "copilot", `copilot-${timestamp}`, "copilot");
+  if (!ctx) return;
+
+  const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.join(ctx.repoRoot, filePath);
+    const relativePath = makeRelative(ctx.repoRoot, absolutePath);
+
+
   // Model info not available in Copilot payload; use "copilot" as model name
   const model = "copilot";
 
   // Handle create tool (new file creation)
   if (toolName === "create") {
     // For create, we need to read the file to get its content
-    
-    // TODO: handle create tool call
-    // edits.push({
-    //   timestamp,
-    //   provider: "copilot",
-    //   filePath,
-    //   model,
-    //   lines,
-    //   content,
-    //   contentHash: computeHash(content),
-    //   contentHashNormalized: computeNormalizedHash(content),
-    //   editType: "addition",
-    // });
-    return edits;
+
+    const afterCreateContent = readFileContent(absolutePath);
+    if (afterCreateContent) {
+      await recordAIDelta(ctx, filePath, "", afterCreateContent);
+    }
+    return;
   }
 
   // Handle edit tool
   if (toolName === "edit") {
-    // Read the current file content (after edit)
-    // TODO: handle edit tool call
-    // edits.push({
-    //   timestamp,
-    //   provider: "copilot",
-    //   filePath,
-    //   model,
-    //   lines,
-    //   content: addedContent,
-    //   contentHash: computeHash(addedContent),
-    //   contentHashNormalized: computeNormalizedHash(addedContent),
-    //   editType: determineEditType(toolArgs.old_str, toolArgs.new_str || ''),
-    //   oldContent: toolArgs.old_str,
-    // });
-    return edits;
+    // TODO: parse the old_str / new_str payload, generate snapshot deltas
+    return;
   }
 
-  return edits;
+  // TODO: check for preToolUse payloads
+
+  return;
 }
 
 // =============================================================================
