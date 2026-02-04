@@ -872,7 +872,7 @@ async function processCopilotPayload(payload: CopilotPayload, event?: string): P
       model: ctx.model,
       conversationId,
     });
-    const prompt = payload.initialPrompt;
+
     if (payload.initialPrompt) {
       const contentHash = hashPromptContent(payload.initialPrompt);
       if (!promptExists(ctx.sessionId, contentHash)) {
@@ -899,17 +899,17 @@ async function processCopilotPayload(payload: CopilotPayload, event?: string): P
       // Parse toolArgs JSON string
       const filePath = toolArgs?.path;
       if (filePath) {
-          // TODO: get a real conversation ID ?
-          const conversationId = `copilot-pretooluse-${Date.now()}`;
-          const ctx = await setupCaptureContext(pathForRepo, copilotModel, conversationId, copilotModel);
-          if (!ctx) return;
-          
-          await detectAndRecordHumanEdits(ctx, conversationId, filePath);
-          await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
-          if (process.env.AGENTBLAME_DEBUG) {
-            console.error(`[agentblame] copilot preToolUse success: ${filePath}`);
-          }
+        // TODO: get a real conversation ID ?
+        const conversationId = `copilot-pretooluse-${Date.now()}`;
+        const ctx = await setupCaptureContext(pathForRepo, copilotModel, conversationId, copilotModel);
+        if (!ctx) return;
+        
+        await detectAndRecordHumanEdits(ctx, conversationId, filePath);
+        await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
+        if (process.env.AGENTBLAME_DEBUG) {
+          console.error(`[agentblame] copilot preToolUse success: ${filePath}`);
         }
+      }
     }
     // TODO: support multi-file edits? (Will copilot send a multi-edit, or multiple edit events?)
 
@@ -975,6 +975,28 @@ async function processCopilotPayload(payload: CopilotPayload, event?: string): P
     const afterCreateContent = readFileContent(absolutePath);
     if (afterCreateContent) {
       await recordAIDelta(ctx, filePath, "", afterCreateContent);
+    }
+  }
+
+  // Handle edit tool (editing a file)
+  if (toolName === "edit") {
+    const conversationId = `copilot-posttooluse-${Date.now()}`;
+    const beforeContent = await getBeforeContent(ctx, conversationId, filePath);
+    const afterContent = readFileContent(absolutePath);
+
+    if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame] PostToolUse ${toolName}: ${filePath}`);
+      console.error(`[agentblame]   beforeContent: ${beforeContent ? beforeContent.length + ' chars' : 'null'}`);
+      console.error(`[agentblame]   afterContent: ${afterContent ? afterContent.length + ' chars' : 'null'}`);
+    }
+
+    if (afterContent) {
+      await recordAIDelta(ctx, filePath, beforeContent, afterContent);
+      // Update checkpoint to current state so next PreToolUse doesn't
+      // incorrectly detect this AI edit as a "human edit"
+      await captureFileCheckpoint(ctx.repoRoot, conversationId, filePath);
+    } else if (process.env.AGENTBLAME_DEBUG) {
+      console.error(`[agentblame]   SKIPPED: no afterContent for ${filePath}`);
     }
   }
 }
