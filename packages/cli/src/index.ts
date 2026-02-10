@@ -121,19 +121,11 @@ Agent Blame v3 - Track AI-generated code in your commits
 
 Usage:
   agentblame init              Set up hooks for current repo
-  agentblame init --force      Also clean up old global install
   agentblame clean             Remove hooks from current repo
-  agentblame blame <file>      Show AI attribution for a file
-  agentblame blame --summary   Show summary only
-  agentblame blame --json      Output as JSON
-  agentblame blame --verbose   Show full prompts (not truncated)
+  agentblame blame <file>      Show AI attribution
   agentblame sync              Transfer notes after squash/rebase
-  agentblame config            Show all configuration
-  agentblame config set <key> <value>  Set a config value
+  agentblame config            Show/set configuration
   agentblame debug             Show detailed debug info
-
-Configuration Keys:
-  storePromptContent    Store actual prompt text (default: false)
 
 Examples:
   agentblame init
@@ -260,7 +252,10 @@ async function cleanupGlobalInstall(): Promise<{
 }
 
 async function runInit(initArgs: string[] = []): Promise<void> {
+  // TODO: map these CL switches to config value enum keys
   const forceCleanup = initArgs.includes("--force") || initArgs.includes("-f");
+  const traceHooks = initArgs.includes("--trace-hooks");
+  const storePromptContent = initArgs.includes("--store-prompt-content");
 
   // Check if Bun is installed (required for hooks)
   if (!isBunInstalled()) {
@@ -326,6 +321,11 @@ async function runInit(initArgs: string[] = []): Promise<void> {
     setDatabasePath(dbPath);
     initDatabase();
     results.push({ name: "Database (.git/agentblame/)", success: true });
+    if (traceHooks || storePromptContent) {
+      await setConfig(repoRoot, 'traceHooks', traceHooks);
+      await setConfig(repoRoot, 'storePromptContent', storePromptContent);
+      results.push({ name: `Config values`, success: true });
+    }
   } catch (err) {
     results.push({ name: "Database", success: false });
   }
