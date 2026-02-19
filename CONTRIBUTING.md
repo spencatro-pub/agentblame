@@ -27,6 +27,15 @@ bun run build
 cd packages/cli && npm install -g .
 ```
 
+### Compile to binary
+
+```
+cd packages/cli && bun build src/index.ts --compile --outfile agentblame-bin
+```
+
+Now you can install the `agentblame-bin` file anywhere in your path, and e.g. tools like Little Snitch should be able to set
+rules on the specific process.
+
 ### Project Structure
 
 ```
